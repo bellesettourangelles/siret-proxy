@@ -2,11 +2,17 @@ const express = require('express');
 const fetch = require('node-fetch');
 const app = express();
 
-const ALLOWED_ORIGIN = 'https://bellesettourangelles.fr';
+const ALLOWED_ORIGINS = [
+  'https://bellesettourangelles.fr',
+  'https://tpmec3-g1.myshopify.com'
+];
 const INSEE_API_KEY = process.env.INSEE_API_KEY;
 
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
   res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
