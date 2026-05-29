@@ -20,46 +20,33 @@ app.get('/siret/:siret', async (req, res) => {
     return res.status(400).json({ error: 'SIRET invalide' });
   }
 
-  // On teste les 3 méthodes d'auth possibles pour l'API INSEE
-  const attempts = [
-    { 'Authorization': `Bearer ${INSEE_API_KEY}`, 'Accept': 'application/json' },
-    { 'X-INSEE-Api-Key-Integration': INSEE_API_KEY, 'Accept': 'application/json' },
-    { 'apiKey': INSEE_API_KEY, 'Accept': 'application/json' },
-  ];
-
-  let lastStatus = 0;
-  let lastText = '';
-
-  for (const headers of attempts) {
-    try {
-      const response = await fetch(
-        `https://api.insee.fr/entreprises/sirene/V3.11/siret/${siret}`,
-        { headers }
-      );
-
-      const text = await response.text();
-      lastStatus = response.status;
-      lastText = text;
-
-      // Si on obtient du JSON valide et pas une erreur HTML
-      if (response.headers.get('content-type')?.includes('application/json')) {
-        try {
-          const data = JSON.parse(text);
-          return res.status(response.status).json(data);
-        } catch(e) {}
+  try {
+    const response = await fetch(
+      `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
+      {
+        headers: {
+          'X-INSEE-Api-Key-Integration': INSEE_API_KEY,
+          'Accept': 'application/json'
+        }
       }
+    );
 
+    const text = await response.text();
+
+    try {
+      const data = JSON.parse(text);
+      return res.status(response.status).json(data);
     } catch(e) {
-      lastText = e.message;
+      return res.status(502).json({
+        error: 'Réponse INSEE invalide',
+        status: response.status,
+        raw: text.slice(0, 300)
+      });
     }
-  }
 
-  // Aucune méthode n'a fonctionné — on retourne le détail pour déboguer
-  return res.status(502).json({
-    error: 'Toutes les méthodes ont échoué',
-    lastStatus,
-    lastResponse: lastText.slice(0, 500)
-  });
+  } catch(e) {
+    return res.status(500).json({ error: 'Erreur serveur', detail: e.message });
+  }
 });
 
 app.listen(process.env.PORT || 3000);
