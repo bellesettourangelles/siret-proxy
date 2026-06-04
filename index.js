@@ -12,14 +12,37 @@ app.use((req, res, next) => {
   next();
 });
 
+let inseeToken = null;
+let inseeTokenExpiry = 0;
+
+async function getInseeToken() {
+  if (inseeToken && Date.now() < inseeTokenExpiry) return inseeToken;
+  const credentials = Buffer.from(
+    process.env.INSEE_CLIENT_ID + ':' + process.env.INSEE_CLIENT_SECRET
+  ).toString('base64');
+  const res = await fetch('https://api.insee.fr/token', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Basic ' + credentials,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: 'grant_type=client_credentials'
+  });
+  const data = await res.json();
+  inseeToken = data.access_token;
+  inseeTokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
+  return inseeToken;
+}
+
 app.get('/siret/:siret', async (req, res) => {
   const { siret } = req.params;
   try {
+    const token = await getInseeToken();
     const response = await fetch(
       `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
       {
         headers: {
-          'Authorization': `Bearer ${process.env.INSEE_API_KEY}`,
+          'Authorization': `Bearer ${token}`,
           'Accept': 'application/json'
         }
       }
@@ -33,7 +56,6 @@ app.get('/siret/:siret', async (req, res) => {
 
 app.post('/register', async (req, res) => {
   const { firstName, lastName, email, password, tags, phone, note } = req.body;
-
   try {
     const response = await fetch(
       `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01/customers.json`,
@@ -58,15 +80,9 @@ app.post('/register', async (req, res) => {
         })
       }
     );
-
     const data = await response.json();
-
-    if (data.errors) {
-      return res.status(400).json({ errors: data.errors });
-    }
-
+    if (data.errors) return res.status(400).json({ errors: data.errors });
     return res.json({ success: true, customer: data.customer });
-
   } catch(e) {
     return res.status(500).json({ errors: [{ message: e.message }] });
   }
