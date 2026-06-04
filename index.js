@@ -12,6 +12,40 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/siret/:siret', async (req, res) => {
+  const { siret } = req.params;
+  try {
+    const response = await fetch(
+      `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${await getInseeToken()}`,
+          'Accept': 'application/json'
+        }
+      }
+    );
+    if (!response.ok) {
+      const fallback = await fetch(
+        `https://recherche-entreprises.api.gouv.fr/search?q=${siret}&page=1&per_page=1`
+      );
+      const fallbackData = await fallback.json();
+      return res.json({ _source: 'gouv', results: fallbackData.results });
+    }
+    const data = await response.json();
+    res.json(data);
+  } catch(e) {
+    try {
+      const fallback = await fetch(
+        `https://recherche-entreprises.api.gouv.fr/search?q=${siret}&page=1&per_page=1`
+      );
+      const fallbackData = await fallback.json();
+      return res.json({ _source: 'gouv', results: fallbackData.results });
+    } catch(e2) {
+      res.status(500).json({ error: e2.message });
+    }
+  }
+});
+
 let inseeToken = null;
 let inseeTokenExpiry = 0;
 
@@ -33,26 +67,6 @@ async function getInseeToken() {
   inseeTokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
   return inseeToken;
 }
-
-app.get('/siret/:siret', async (req, res) => {
-  const { siret } = req.params;
-  try {
-    const token = await getInseeToken();
-    const response = await fetch(
-      `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json'
-        }
-      }
-    );
-    const data = await response.json();
-    res.json(data);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 app.post('/register', async (req, res) => {
   const { firstName, lastName, email, password, tags, phone, note } = req.body;
