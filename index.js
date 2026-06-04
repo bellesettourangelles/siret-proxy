@@ -2,187 +2,74 @@ const express = require('express');
 const fetch = require('node-fetch');
 const app = express();
 
-const INSEE_API_KEY = process.env.INSEE_API_KEY;
-const API_VERSION = '2025-10';
+app.use(express.json());
 
-// CORS : POST ajouté pour /register. Origine '*' provisoire (on durcira à l'étape 5).
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
-// Lecture du corps JSON (nécessaire pour POST /register)
-app.use(express.json());
-
-// ---- Route SIRET existante (inchangée) ----
 app.get('/siret/:siret', async (req, res) => {
   const { siret } = req.params;
-  if (!/^\d{14}$/.test(siret)) {
-    return res.status(400).json({ error: 'SIRET invalide' });
-  }
   try {
     const response = await fetch(
       `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
-      { headers: { 'X-INSEE-Api-Key-Integration': INSEE_API_KEY, 'Accept': 'application/json' } }
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.INSEE_API_KEY}`,
+          'Accept': 'application/json'
+        }
+      }
     );
-    const text = await response.text();
-    try {
-      const data = JSON.parse(text);
-      return res.status(response.status).json(data);
-    } catch (e) {
-      return res.status(502).json({ error: 'Réponse INSEE invalide', status: response.status, raw: text.slice(0, 300) });
-    }
-  } catch (e) {
-    return res.status(500).json({ error: 'Erreur serveur', detail: e.message });
+    const data = await response.json();
+    res.json(data);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
 app.post('/register', async (req, res) => {
-  res.header('Access-Control-Allow-Origin', 'https://bellesettourangelles.fr');
-  
   const { firstName, lastName, email, password, tags, phone, note } = req.body;
 
   try {
-    const mutation = `
-      mutation customerCreate($input: CustomerCreateInput!) {
-        customerCreate(input: $input) {
-          customer { id email }
-          customerUserErrors { field message }
-        }
-      }
-    `;
-
-    const variables = {
-      input: {
-        firstName, lastName, email, password,
-        phone: phone || undefined,
-        tags: tags,
-        note: note || undefined,
-        acceptsMarketing: false
-      }
-    };
-
     const response = await fetch(
-      `https://bellesettourangelles.myshopify.com/api/2024-01/graphql.json`,
+      `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01/customers.json`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Shopify-Storefront-Access-Token': process.env.STOREFRONT_TOKEN
+          'X-Shopify-Access-Token': process.env.SHOPIFY_API_SECRET
         },
-        body: JSON.stringify({ query: mutation, variables })
+        body: JSON.stringify({
+          customer: {
+            first_name: firstName || '',
+            last_name: lastName || '',
+            email,
+            password,
+            password_confirmation: password,
+            tags: tags || '',
+            note: note || '',
+            phone: phone || '',
+            verified_email: true
+          }
+        })
       }
     );
 
     const data = await response.json();
-    const result = data.data?.customerCreate;
 
-    if (result?.customerUserErrors?.length > 0) {
-      return res.status(400).json({ errors: result.customerUserErrors });
+    if (data.errors) {
+      return res.status(400).json({ errors: data.errors });
     }
 
-    return res.json({ success: true, customer: result?.customer });
+    return res.json({ success: true, customer: data.customer });
 
   } catch(e) {
     return res.status(500).json({ errors: [{ message: e.message }] });
   }
 });
 
-// ---- NOUVEAU : token Admin via Client Credentials (mis en cache ~24h) ----
-let _adminToken = null;
-let _adminTokenExpiry = 0;
-
-async function getAdminToken() {
-  if (_adminToken && Date.now() < _adminTokenExpiry) return _adminToken;
-  const r = await fetch(`https://${process.env.SHOP_DOMAIN}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({
-      client_id: process.env.SHOPIFY_CLIENT_ID,
-      client_secret: process.env.SHOPIFY_CLIENT_SECRET,
-      grant_type: 'client_credentials'
-    })
-  });
-  const data = await r.json();
-  if (!r.ok || !data.access_token) {
-    throw new Error('token_error ' + r.status + ' ' + JSON.stringify(data));
-  }
-  _adminToken = data.access_token;
-  _adminTokenExpiry = Date.now() + ((data.expires_in || 86400) - 300) * 1000; // marge 5 min
-  return _adminToken;
-}
-
-// ---- NOUVEAU : re-vérif SIRET côté serveur (on ne fait pas confiance au navigateur) ----
-async function siretEstActif(siret) {
-  const response = await fetch(
-    `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
-    { headers: { 'X-INSEE-Api-Key-Integration': INSEE_API_KEY, 'Accept': 'application/json' } }
-  );
-  if (response.status !== 200) return false;
-  const data = await response.json();
-  const etab = data && data.etablissement;
-  const periode = etab && etab.periodesEtablissement && etab.periodesEtablissement[0];
-  return !!(periode && periode.etatAdministratifEtablissement === 'A');
-}
-
-// ---- NOUVEAU : création du client ----
-app.post('/register', async (req, res) => {
-  const { type, firstName, lastName, email, phone, siret } = req.body || {};
-
-  if (!lastName || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || '')) {
-    return res.status(400).json({ error: 'invalid_input' });
-  }
-
-  let tags = ['customer'];
-  let note = '';
-
-  if (type === 'pro') {
-    if (!/^\d{14}$/.test(siret || '')) return res.status(400).json({ error: 'invalid_siret' });
-    const actif = await siretEstActif(siret).catch(() => false);
-    if (!actif) return res.status(400).json({ error: 'invalid_siret' });
-    tags = ['wholesale_pending'];
-    note = 'siret:' + siret;
-  }
-
-  const cleanPhone = (phone || '').replace(/\s/g, '');
-  const input = {
-    firstName: firstName || null,
-    lastName,
-    email,
-    phone: /^\+\d{8,15}$/.test(cleanPhone) ? cleanPhone : null,
-    tags,
-    note
-  };
-
-  try {
-    const token = await getAdminToken();
-    const r = await fetch(`https://${process.env.SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-      body: JSON.stringify({
-        query: `mutation customerCreate($input: CustomerInput!) {
-          customerCreate(input: $input) { customer { id } userErrors { field message } }
-        }`,
-        variables: { input }
-      })
-    });
-    const data = await r.json();
-    const result = data && data.data && data.data.customerCreate;
-
-    if (result && result.userErrors && result.userErrors.length) {
-      const msg = result.userErrors[0].message || '';
-      return res.status(400).json({ error: /taken|already/i.test(msg) ? 'email_taken' : 'shopify_error', message: msg });
-    }
-    if (!result || !result.customer) {
-      return res.status(502).json({ error: 'no_customer', detail: data });
-    }
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(502).json({ error: 'upstream', detail: e.message });
-  }
-});
-
-app.listen(process.env.PORT || 3000);
+app.listen(3000, () => console.log('Proxy running on port 3000'));
