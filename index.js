@@ -40,6 +40,57 @@ app.get('/siret/:siret', async (req, res) => {
   }
 });
 
+app.post('/register', async (req, res) => {
+  res.header('Access-Control-Allow-Origin', 'https://bellesettourangelles.fr');
+  
+  const { firstName, lastName, email, password, tags, phone, note } = req.body;
+
+  try {
+    const mutation = `
+      mutation customerCreate($input: CustomerCreateInput!) {
+        customerCreate(input: $input) {
+          customer { id email }
+          customerUserErrors { field message }
+        }
+      }
+    `;
+
+    const variables = {
+      input: {
+        firstName, lastName, email, password,
+        phone: phone || undefined,
+        tags: tags,
+        note: note || undefined,
+        acceptsMarketing: false
+      }
+    };
+
+    const response = await fetch(
+      `https://bellesettourangelles.myshopify.com/api/2024-01/graphql.json`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Storefront-Access-Token': process.env.STOREFRONT_TOKEN
+        },
+        body: JSON.stringify({ query: mutation, variables })
+      }
+    );
+
+    const data = await response.json();
+    const result = data.data?.customerCreate;
+
+    if (result?.customerUserErrors?.length > 0) {
+      return res.status(400).json({ errors: result.customerUserErrors });
+    }
+
+    return res.json({ success: true, customer: result?.customer });
+
+  } catch(e) {
+    return res.status(500).json({ errors: [{ message: e.message }] });
+  }
+});
+
 // ---- NOUVEAU : token Admin via Client Credentials (mis en cache ~24h) ----
 let _adminToken = null;
 let _adminTokenExpiry = 0;
