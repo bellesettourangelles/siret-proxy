@@ -85,9 +85,9 @@ app.post('/register', async (req, res) => {
       }
     );
     const data = await response.json();
-    console.log('Shopify response:', JSON.stringify(data));
+    console.log('Shopify response:', JSON.stringify(data)); const customerId = data.customer?.id; const adminLink = customerId ? `https://admin.shopify.com/store/bellesettourangelles/customers/${customerId}` : '';
     if (data.errors) return res.status(400).json({ errors: Array.isArray(data.errors) ? data.errors : [{ message: JSON.stringify(data.errors) }] });
-    return res.json({ success: true, customer: data.customer });
+    return res.json({ success: true, customer: data.customer, adminLink });
   } catch(e) {
     return res.status(500).json({ errors: [{ message: e.message }] });
   }
