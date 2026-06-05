@@ -12,37 +12,24 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/siret/:siret', async (req, res) => {
-  const { siret } = req.params;
+// Route OAuth callback — affiche le token dans les logs
+app.get('/auth/callback', async (req, res) => {
+  const { code, shop } = req.query;
   try {
-    const response = await fetch(
-      `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${await getInseeToken()}`,
-          'Accept': 'application/json'
-        }
-      }
-    );
-    if (!response.ok) {
-      const fallback = await fetch(
-        `https://recherche-entreprises.api.gouv.fr/search?q=${siret}&page=1&per_page=1`
-      );
-      const fallbackData = await fallback.json();
-      return res.json({ _source: 'gouv', results: fallbackData.results });
-    }
+    const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: process.env.SHOPIFY_API_KEY,
+        client_secret: process.env.SHOPIFY_API_SECRET,
+        code
+      })
+    });
     const data = await response.json();
-    res.json(data);
+    console.log('=== SHOPIFY ACCESS TOKEN ===', data.access_token);
+    res.send('Token récupéré ! Copie-le dans les logs Render : ' + data.access_token);
   } catch(e) {
-    try {
-      const fallback = await fetch(
-        `https://recherche-entreprises.api.gouv.fr/search?q=${siret}&page=1&per_page=1`
-      );
-      const fallbackData = await fallback.json();
-      return res.json({ _source: 'gouv', results: fallbackData.results });
-    } catch(e2) {
-      res.status(500).json({ error: e2.message });
-    }
+    res.status(500).send('Erreur : ' + e.message);
   }
 });
 
@@ -68,6 +55,30 @@ async function getInseeToken() {
   return inseeToken;
 }
 
+app.get('/siret/:siret', async (req, res) => {
+  const { siret } = req.params;
+  try {
+    const token = await getInseeToken();
+    const response = await fetch(
+      `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
+      { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' } }
+    );
+    if (response.ok) {
+      const data = await response.json();
+      return res.json(data);
+    }
+  } catch(e) {}
+  try {
+    const fallback = await fetch(
+      `https://recherche-entreprises.api.gouv.fr/search?q=${siret}&page=1&per_page=1`
+    );
+    const fallbackData = await fallback.json();
+    return res.json({ _source: 'gouv', results: fallbackData.results });
+  } catch(e2) {
+    return res.status(500).json({ error: e2.message });
+  }
+});
+
 app.post('/register', async (req, res) => {
   const { firstName, lastName, email, password, tags, phone, note } = req.body;
   try {
@@ -77,7 +88,7 @@ app.post('/register', async (req, res) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': process.env.SHOPIFY_API_SECRET
+          'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
         },
         body: JSON.stringify({
           customer: {
