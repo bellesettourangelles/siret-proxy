@@ -60,65 +60,34 @@ app.get('/siret/:siret', async (req, res) => {
 
 app.post('/register', async (req, res) => {
   const { firstName, lastName, email, password, tags, phone, note } = req.body;
-
-  const mutation = `
-    mutation customerCreate($input: CustomerCreateInput!) {
-      customerCreate(input: $input) {
-        customer {
-          id
-          email
-          firstName
-          lastName
-        }
-        customerUserErrors {
-          field
-          message
-        }
-      }
-    }
-  `;
-
-  const input = {
-    firstName: firstName || '',
-    lastName: lastName || '',
-    email,
-    password,
-    acceptsMarketing: false,
-    phone: phone || undefined,
-    note: note || undefined,
-    tags: tags ? [tags] : undefined
-  };
-
-  // Nettoie les champs undefined
-  Object.keys(input).forEach(k => input[k] === undefined && delete input[k]);
-
   try {
     const response = await fetch(
-      `https://${process.env.SHOPIFY_STORE}/api/2024-01/graphql.json`,
+      `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01/customers.json`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_STOREFRONT_TOKEN
+          'X-Shopify-Access-Token': process.env.SHOPIFY_API_SECRET
         },
-        body: JSON.stringify({ query: mutation, variables: { input } })
+        body: JSON.stringify({
+          customer: {
+            first_name: firstName || '',
+            last_name: lastName || '',
+            email,
+            password,
+            password_confirmation: password,
+            tags: tags || '',
+            note: note || '',
+            phone: phone || '',
+            verified_email: true
+          }
+        })
       }
     );
-
     const data = await response.json();
-    const result = data.data?.customerCreate;
-
-    if (!result) {
-      console.log('Shopify response:', JSON.stringify(data));
-      return res.status(500).json({ errors: [{ message: 'Réponse inattendue de Shopify' }] });
-    }
-
-    if (result.customerUserErrors && result.customerUserErrors.length > 0) {
-      return res.status(400).json({ errors: result.customerUserErrors });
-    }
-
-    return res.json({ success: true, customer: result.customer });
-
+    console.log('Shopify response:', JSON.stringify(data));
+    if (data.errors) return res.status(400).json({ errors: Array.isArray(data.errors) ? data.errors : [{ message: JSON.stringify(data.errors) }] });
+    return res.json({ success: true, customer: data.customer });
   } catch(e) {
     return res.status(500).json({ errors: [{ message: e.message }] });
   }
