@@ -12,27 +12,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Route OAuth callback — affiche le token dans les logs
-app.get('/auth/callback', async (req, res) => {
-  const { code, shop } = req.query;
-  try {
-    const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: process.env.SHOPIFY_API_KEY,
-        client_secret: process.env.SHOPIFY_API_SECRET,
-        code
-      })
-    });
-    const data = await response.json();
-    console.log('=== SHOPIFY ACCESS TOKEN ===', data.access_token);
-    res.send('Token récupéré ! Copie-le dans les logs Render : ' + data.access_token);
-  } catch(e) {
-    res.status(500).send('Erreur : ' + e.message);
-  }
-});
-
 let inseeToken = null;
 let inseeTokenExpiry = 0;
 
@@ -81,33 +60,65 @@ app.get('/siret/:siret', async (req, res) => {
 
 app.post('/register', async (req, res) => {
   const { firstName, lastName, email, password, tags, phone, note } = req.body;
+
+  const mutation = `
+    mutation customerCreate($input: CustomerCreateInput!) {
+      customerCreate(input: $input) {
+        customer {
+          id
+          email
+          firstName
+          lastName
+        }
+        customerUserErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const input = {
+    firstName: firstName || '',
+    lastName: lastName || '',
+    email,
+    password,
+    acceptsMarketing: false,
+    phone: phone || undefined,
+    note: note || undefined,
+    tags: tags ? [tags] : undefined
+  };
+
+  // Nettoie les champs undefined
+  Object.keys(input).forEach(k => input[k] === undefined && delete input[k]);
+
   try {
     const response = await fetch(
-      `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01/customers.json`,
+      `https://${process.env.SHOPIFY_STORE}/api/2024-01/graphql.json`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
+          'X-Shopify-Storefront-Access-Token': process.env.SHOPIFY_STOREFRONT_TOKEN
         },
-        body: JSON.stringify({
-          customer: {
-            first_name: firstName || '',
-            last_name: lastName || '',
-            email,
-            password,
-            password_confirmation: password,
-            tags: tags || '',
-            note: note || '',
-            phone: phone || '',
-            verified_email: true
-          }
-        })
+        body: JSON.stringify({ query: mutation, variables: { input } })
       }
     );
+
     const data = await response.json();
-    if (data.errors) return res.status(400).json({ errors: data.errors });
-    return res.json({ success: true, customer: data.customer });
+    const result = data.data?.customerCreate;
+
+    if (!result) {
+      console.log('Shopify response:', JSON.stringify(data));
+      return res.status(500).json({ errors: [{ message: 'Réponse inattendue de Shopify' }] });
+    }
+
+    if (result.customerUserErrors && result.customerUserErrors.length > 0) {
+      return res.status(400).json({ errors: result.customerUserErrors });
+    }
+
+    return res.json({ success: true, customer: result.customer });
+
   } catch(e) {
     return res.status(500).json({ errors: [{ message: e.message }] });
   }
