@@ -12,85 +12,34 @@ app.use((req, res, next) => {
   next();
 });
 
-let inseeToken = null;
-let inseeTokenExpiry = 0;
-
-async function getInseeToken() {
-  if (inseeToken && Date.now() < inseeTokenExpiry) return inseeToken;
-  const credentials = Buffer.from(
-    process.env.INSEE_CLIENT_ID + ':' + process.env.INSEE_CLIENT_SECRET
-  ).toString('base64');
-  const res = await fetch('https://api.insee.fr/token', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Basic ' + credentials,
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: 'grant_type=client_credentials'
-  });
-  const data = await res.json();
-  inseeToken = data.access_token;
-  inseeTokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
-  return inseeToken;
-}
-
-app.get('/siret/:siret', async (req, res) => {
-  const { siret } = req.params;
+app.get('/auth/callback', async (req, res) => {
+  const { code, shop } = req.query;
+  console.log('=== AUTH CALLBACK reçu ===', { code, shop });
   try {
-    const token = await getInseeToken();
-    const response = await fetch(
-      `https://api.insee.fr/api-sirene/3.11/siret/${siret}`,
-      { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' } }
-    );
-    if (response.ok) {
-      const data = await response.json();
-      return res.json(data);
-    }
-  } catch(e) {}
-  try {
-    const fallback = await fetch(
-      `https://recherche-entreprises.api.gouv.fr/search?q=${siret}&page=1&per_page=1`
-    );
-    const fallbackData = await fallback.json();
-    return res.json({ _source: 'gouv', results: fallbackData.results });
-  } catch(e2) {
-    return res.status(500).json({ error: e2.message });
+    const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: process.env.SHOPIFY_API_KEY,
+        client_secret: process.env.SHOPIFY_API_SECRET,
+        code
+      })
+    });
+    const data = await response.json();
+    console.log('=== SHOPIFY ACCESS TOKEN ===', data.access_token);
+    res.send('TOKEN OK: ' + data.access_token);
+  } catch(e) {
+    console.log('=== ERREUR CALLBACK ===', e.message);
+    res.status(500).send('Erreur: ' + e.message);
   }
 });
 
+app.get('/siret/:siret', async (req, res) => {
+  res.json({ _source: 'test', message: 'ok' });
+});
+
 app.post('/register', async (req, res) => {
-  const { firstName, lastName, email, password, tags, phone, note } = req.body;
-  try {
-    const response = await fetch(
-      `https://${process.env.SHOPIFY_STORE}/admin/api/2024-01/customers.json`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': process.env.SHOPIFY_API_SECRET
-        },
-        body: JSON.stringify({
-          customer: {
-            first_name: firstName || '',
-            last_name: lastName || '',
-            email,
-            password,
-            password_confirmation: password,
-            tags: tags || '',
-            note: note || '',
-            phone: phone || '',
-            verified_email: true
-          }
-        })
-      }
-    );
-    const data = await response.json();
-    console.log('Shopify response:', JSON.stringify(data));
-    if (data.errors) return res.status(400).json({ errors: Array.isArray(data.errors) ? data.errors : [{ message: JSON.stringify(data.errors) }] });
-    return res.json({ success: true, customer: data.customer });
-  } catch(e) {
-    return res.status(500).json({ errors: [{ message: e.message }] });
-  }
+  res.json({ success: false, message: 'token manquant' });
 });
 
 app.listen(3000, () => console.log('Proxy running on port 3000'));
