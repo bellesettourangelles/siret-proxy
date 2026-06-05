@@ -43,3 +43,9 @@ app.post('/register', async (req, res) => {
 });
 
 app.listen(3000, () => console.log('Proxy running on port 3000'));
+app.get('/auth/start', (req, res) => {
+  const shop = req.query.shop || 'tpmec3-g1.myshopify.com';
+  const redirectUri = 'https://siret-proxy.onrender.com/auth/callback';
+  const scope = 'read_customers,write_customers';
+  res.redirect(`https://${shop}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=${scope}&redirect_uri=${redirectUri}&state=install`);
+});
